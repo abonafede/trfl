@@ -27,7 +27,7 @@ import collections
 
 # Dependency imports
 import tensorflow.compat.v1 as tf
-import tensorflow.probability as tfp
+import tensorflow_probability as tfp
 from trfl import base_ops
 from trfl import indexing_ops
 from trfl import sequence_ops
