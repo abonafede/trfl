@@ -27,6 +27,7 @@ import collections
 
 # Dependency imports
 import tensorflow.compat.v1 as tf
+import tensorflow.probability as tfp
 from trfl import base_ops
 from trfl import indexing_ops
 from trfl import sequence_ops
@@ -35,7 +36,8 @@ QExtra = collections.namedtuple(
     "qlearning_extra", ["target", "td_error"])
 DoubleQExtra = collections.namedtuple(
     "double_qlearning_extra", ["target", "td_error", "best_action"])
-
+DoubleCQLExtra = collections.namedtuple(
+    "double_cql_extra", ["target", "cql_extra", "best_action"])
 
 def qlearning(q_tm1, a_tm1, r_t, pcont_t, q_t, name="QLearning"):
   """Implements the Q-learning loss as a TensorFlow op.
@@ -137,6 +139,82 @@ def double_qlearning(
     return base_ops.LossOutput(
         loss, DoubleQExtra(target, td_error, best_action))
 
+def double_cql(
+    q_tm1, a_tm1, r_t, pcont_t, q_t_value, q_t_selector,
+    target_percentile, name="DoubleCQL",alpha=1.0,temperature=5.0):
+  """Implements the double CQL loss as a TensorFlow op.
+
+  The loss is `0.5` times the squared difference between `q_tm1[a_tm1]` and
+  the target `r_t + pcont_t * (q_t_value[argmax q_t_selector] - alpha * logsumexp(q_t_selector / alpha))`.
+
+  See "CQL: Conservative Q-Learning for Offline Reinforcement Learning" by Kumar et al.
+  (https://arxiv.org/abs/2006.04779).
+
+  Args:
+    q_tm1: Tensor holding Q-values for first timestep in a batch of
+      transitions, shape `[B x num_actions]`.
+    a_tm1: Tensor holding action indices, shape `[B]`.
+    r_t: Tensor holding rewards, shape `[B]`.
+    pcont_t: Tensor holding pcontinue values, shape `[B]`.
+    q_t_value: Tensor of Q-values for second timestep in a batch of transitions,
+      used to estimate the value of the best action, shape `[B x num_actions]`.
+    q_t_selector: Tensor of Q-values for second timestep in a batch of
+      transitions used to estimate the best action, shape `[B x num_actions]`.
+    temperature: The temperature used to compute the CQL loss.
+    target_percentile: The percentile of the Q-values used as a target for the CQL loss.
+    name: name to prefix ops created within this op.
+
+  Returns:
+    A namedtuple with fields:
+
+    * `loss`: a tensor containing the batch of losses, shape `[B]`.
+    * `extra`: a namedtuple with fields:
+        * `target`: batch of target values for `q_tm1[a_tm1]`, shape `[B]`
+        * `cql_extra`: namedtuple with fields:
+            * `logsumexp`: log-sum-exp term in the CQL loss, shape `[B]`.
+            * `q_percentile`: the target percentile of the Q-values, shape `[B]`.
+        * `best_action`: batch of greedy actions wrt `q_t_selector`, shape `[B]`
+  """
+  # Rank and compatibility checks.
+  base_ops.wrap_rank_shape_assert(
+      [[q_tm1, q_t_value, q_t_selector], [a_tm1, r_t, pcont_t]], [2, 1], name)
+
+  # double CQL op.
+  with tf.name_scope(
+      name, values=[q_tm1, a_tm1, r_t, pcont_t, q_t_value, q_t_selector]):
+
+    # Compute target percentile.
+    q_percentile = tfp.stats.percentile(q_tm1, target_percentile, axis=1, keepdims=True)
+    q_percentile = tf.squeeze(q_percentile, axis=1)
+
+    # Build target and select head to update.
+    best_action = tf.argmax(q_t_selector, 1, output_type=tf.int32)
+    double_q_bootstrapped = indexing_ops.batched_index(q_t_value, best_action)
+    logsumexp = tf.reduce_logsumexp(q_t_selector / temperature, axis=1)
+    target = tf.stop_gradient(
+      r_t + pcont_t * (
+          double_q_bootstrapped - alpha * logsumexp + q_percentile))
+
+    # Compute CQL loss.
+    alpha_t = tf.nn.softmax(q_tm1 / temperature)
+    alpha_prime_t = tf.nnsoftmax(q_t_selector / temperature)
+
+    q_a_t = indexing_ops.batched_index(q_t_selector, a_tm1)
+    log_diff = logsumexp - tf.reduce_logsumexp(q_t_selector / temperature, axis=1)
+    indicator = tf.cast(q_tm1 >= q_percentile, tf.float32)
+    cql_loss = alpha_t * (log_diff - temperature) * indicator
+    cql_loss -= alpha_prime_t * log_diff * (1 - indicator)
+    cql_loss = tf.maximum(cql_loss - temperature, 0)
+    cql_loss = tf.reduce_mean(cql_loss)
+
+    # Build extra output.
+    qa_tm1 = indexing_ops.batched_index(q_tm1, a_tm1)
+    td_error = target - qa_tm1
+    extra = DoubleCQLExtra(target=target, cql_extra=cql_loss, best_action=best_action)
+
+    # Loss is the sum of the TD error and the CQL loss.
+    loss = 0.5 * tf.square(td_error) + cql_loss
+    return base_ops.LossOutput(loss, extra)
 
 def persistent_qlearning(
     q_tm1, a_tm1, r_t, pcont_t, q_t, action_gap_scale=0.5,
