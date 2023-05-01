@@ -15,6 +15,7 @@
 """Flattened namespace for trfl."""
 
 from trfl.action_value_ops import double_qlearning
+from trfl.action_value_ops import double_cql
 from trfl.action_value_ops import persistent_qlearning
 from trfl.action_value_ops import qlambda
 from trfl.action_value_ops import qlearning

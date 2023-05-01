@@ -27,6 +27,7 @@ import collections
 
 # Dependency imports
 import tensorflow.compat.v1 as tf
+import tensorflow_probability as tfp
 from trfl import base_ops
 from trfl import indexing_ops
 from trfl import sequence_ops
@@ -183,9 +184,8 @@ def double_cql(
       name, values=[q_tm1, a_tm1, r_t, pcont_t, q_t_value, q_t_selector]):
 
     # Compute target percentile.
-    k = tf.cast(tf.round(target_percentile * tf.cast(tf.shape(q_tm1)[1], tf.float32)), tf.int32)
-    _, indices = tf.math.top_k(q_tm1, k)
-    q_percentile = tf.reduce_min(indices, axis=1)
+    q_percentile = tfp.stats.percentile(q_tm1, target_percentile, axis=1, keepdims=True)
+    q_percentile = tf.squeeze(q_percentile, axis=1)
 
 
     # Build target and select head to update.
