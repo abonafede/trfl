@@ -198,7 +198,7 @@ def double_cql(
 
     # Compute CQL loss.
     alpha_t = tf.nn.softmax(q_tm1 / temperature)
-    alpha_prime_t = tf.nnsoftmax(q_t_selector / temperature)
+    alpha_prime_t = tf.nn.softmax(q_t_selector / temperature)
 
     q_a_t = indexing_ops.batched_index(q_t_selector, a_tm1)
     log_diff = logsumexp - tf.reduce_logsumexp(q_t_selector / temperature, axis=1)
