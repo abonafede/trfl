@@ -141,7 +141,7 @@ def double_qlearning(
 
 def double_cql(
     q_tm1, a_tm1, r_t, pcont_t, q_t_value, q_t_selector,
-    target_percentile, name="DoubleCQL",alpha=1.0,temperature=5.0):
+    target_percentile=0.55, name="DoubleCQL",alpha=1.0,temperature=5.0):
   """Implements the double CQL loss as a TensorFlow op.
 
   The loss is `0.5` times the squared difference between `q_tm1[a_tm1]` and
