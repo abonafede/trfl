@@ -27,7 +27,6 @@ import collections
 
 # Dependency imports
 import tensorflow.compat.v1 as tf
-import tensorflow_probability as tfp
 from trfl import base_ops
 from trfl import indexing_ops
 from trfl import sequence_ops
@@ -141,7 +140,7 @@ def double_qlearning(
 
 def double_cql(
     q_tm1, a_tm1, r_t, pcont_t, q_t_value, q_t_selector,
-    target_percentile=0.55, name="DoubleCQL",alpha=1.0,temperature=5.0):
+     name="DoubleCQL",alpha=0.5,temperature=5.0):
   """Implements the double CQL loss as a TensorFlow op.
 
   The loss is `0.5` times the squared difference between `q_tm1[a_tm1]` and
@@ -183,18 +182,13 @@ def double_cql(
   with tf.name_scope(
       name, values=[q_tm1, a_tm1, r_t, pcont_t, q_t_value, q_t_selector]):
 
-    # Compute target percentile.
-    q_percentile = tfp.stats.percentile(q_tm1, target_percentile, axis=1, keepdims=True)
-    q_percentile = tf.squeeze(q_percentile, axis=1)
-
-
     # Build target and select head to update.
     best_action = tf.argmax(q_t_selector, 1, output_type=tf.int32)
     double_q_bootstrapped = indexing_ops.batched_index(q_t_value, best_action)
     logsumexp = tf.reduce_logsumexp(q_t_selector / temperature, axis=1)
     target = tf.stop_gradient(
       r_t + pcont_t * (
-          double_q_bootstrapped - alpha * logsumexp + q_percentile))
+          double_q_bootstrapped - alpha * logsumexp))
 
     # Compute CQL loss.
     alpha_t = alpha / q_tm1.shape[1]
@@ -202,9 +196,8 @@ def double_cql(
 
     q_a_t = indexing_ops.batched_index(q_t_selector, a_tm1)
     log_diff = logsumexp - tf.reduce_logsumexp(q_t_selector / temperature, axis=1)
-    indicator = tf.cast(q_tm1 >= q_percentile, tf.float32)
-    cql_loss = alpha_t * (log_diff - temperature) * indicator
-    cql_loss -= alpha_prime_t * log_diff * (1 - indicator)
+    cql_loss = alpha_t * (log_diff - temperature)
+    cql_loss -= alpha_prime_t * log_diff
     cql_loss = tf.maximum(cql_loss - temperature, 0)
     cql_loss = tf.reduce_mean(cql_loss)
 
